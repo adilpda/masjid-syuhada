@@ -26,9 +26,9 @@ if not api_key:
     st.error("🔑 API Key belum ditemukan! Silahkan atur GEMINI_API_KEY pada file .streamlit/secrets.toml atau Streamlit Cloud Secrets.")
     st.stop()
 
-# Initialize Embeddings & LLM
+# Initialize Embeddings & LLM (Menggunakan model embedding terbaru text-embedding-004)
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/embedding-001",
+    model="text-embedding-004",
     google_api_key=api_key
 )
 
