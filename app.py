@@ -4,9 +4,6 @@ import pandas as pd
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
 
 # -----------------------------------------------------------------------------
 # 1. Konfigurasi Halaman & Tema Streamlit
@@ -59,13 +56,11 @@ def load_and_build_vectorstore(excel_path: str):
         for _, row in df_elem.iterrows():
             content = str(row.get("RAG_Summary_Context", ""))
             metadata = {
-                "chunk_id": str(row.get("RAG_Chunk_ID", "")),
                 "identifier": str(row.get("Identifier (dc:identifier)", "")),
                 "title": str(row.get("Title (dc:title)", "")),
                 "type": str(row.get("Type (dc:type)", "")),
                 "coverage": str(row.get("Spatial_Coverage (dc:coverage)", "")),
                 "significance": str(row.get("Significance_Level (dc:rights)", "")),
-                "drawing": str(row.get("Relation_Drawing (dc:relation)", "")),
                 "source": "Dokumen 2 (Gambar Teknis & Identifikasi)"
             }
             documents.append(Document(page_content=content, metadata=metadata))
@@ -76,7 +71,6 @@ def load_and_build_vectorstore(excel_path: str):
         for _, row in df_damg.iterrows():
             content = str(row.get("RAG_Summary_Context", ""))
             metadata = {
-                "chunk_id": str(row.get("RAG_Chunk_ID", "")),
                 "identifier": str(row.get("Identifier (dc:identifier)", "")),
                 "title": str(row.get("Jenis Kerusakan (dc:title)", "")),
                 "type": str(row.get("Kategori Elemen (dc:type)", "")),
@@ -96,28 +90,7 @@ vectorstore = load_and_build_vectorstore(excel_file_path)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
 # -----------------------------------------------------------------------------
-# 4. Prompt RAG Chain Integration
-# -----------------------------------------------------------------------------
-system_prompt = (
-    "Anda adalah asisten ahli Cagar Budaya dan Arsitektur resmi untuk Masjid Peringatan Syuhada Yogyakarta.\n"
-    "Tugas Anda adalah menjawab pertanyaan publik, peneliti, atau pemangku kepentingan berdasarkan konteks metadata berikut:\n\n"
-    "{context}\n\n"
-    "Petunjuk Jawaban:\n"
-    "1. Jawab pertanyaan dengan ramah, jelas, lugas, dan akurat berdasarkan data konteks yang diberikan.\n"
-    "2. Sertakan rincian penting seperti Kode Elemen/Kerusakan (dc:identifier), Lokasi Ruang (dc:coverage), Material, dan Tingkat Signifikansi Cagar Budaya / Urgensi Perbaikan jika relevan.\n"
-    "3. Jika jawaban tidak ada pada konteks metadata di atas, sampaikan dengan santun bahwa informasi spesifik tersebut belum tercatat dalam database inventarisasi saat ini."
-)
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    ("human", "{input}"),
-])
-
-question_answer_chain = create_stuff_documents_chain(llm, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-
-# -----------------------------------------------------------------------------
-# 5. Interface Chatbot Streamlit
+# 4. Antarmuka Chatbot Streamlit
 # -----------------------------------------------------------------------------
 st.sidebar.markdown("### 📋 Pusat Data Cagar Budaya")
 st.sidebar.info(
@@ -144,14 +117,32 @@ if user_input := st.chat_input("Tanyakan sesuatu (misal: Bagaimana spesifikasi p
 
     with st.chat_message("assistant"):
         with st.spinner("Mencari dalam Metadata Cagar Budaya..."):
-            response = rag_chain.invoke({"input": user_input})
-            answer = response["answer"]
+            # Retrieval Step
+            retrieved_docs = retriever.invoke(user_input)
+            context_text = "\n\n".join([doc.page_content for doc in retrieved_docs])
+            
+            # Prompt Construction
+            prompt_text = f"""Anda adalah asisten ahli Cagar Budaya dan Arsitektur resmi untuk Masjid Peringatan Syuhada Yogyakarta.
+Tugas Anda adalah menjawab pertanyaan publik, peneliti, atau pemangku kepentingan berdasarkan konteks metadata berikut:
+
+{context_text}
+
+Pertanyaan Pengguna: {user_input}
+
+Petunjuk Jawaban:
+1. Jawab pertanyaan dengan ramah, jelas, lugas, dan akurat berdasarkan data konteks yang diberikan.
+2. Sertakan rincian penting seperti Kode Elemen/Kerusakan (dc:identifier), Lokasi Ruang (dc:coverage), Material, dan Tingkat Signifikansi Cagar Budaya / Urgensi Perbaikan jika relevan.
+3. Jika jawaban tidak ada pada konteks metadata di atas, sampaikan dengan santun bahwa informasi spesifik tersebut belum tercatat dalam database inventarisasi saat ini."""
+
+            # LLM Generation Step
+            response = llm.invoke(prompt_text)
+            answer = response.content
             
             st.write(answer)
             
             # Tampilkan Referensi Sumber Metadata (RAG Transparency)
             with st.expander("🔍 Lihat Referensi Metadata DCMI yang Dipakai AI"):
-                for idx, doc in enumerate(response["context"], 1):
+                for idx, doc in enumerate(retrieved_docs, 1):
                     meta = doc.metadata
                     st.markdown(f"**[{idx}] {meta.get('identifier', 'Doc')} - {meta.get('title', '')}**")
                     st.markdown(f"- **Lokasi:** {meta.get('coverage', '-')}")
