@@ -28,7 +28,7 @@ if not api_key:
 
 # Inisialisasi LLM Google Gemini untuk menjawab pertanyaan
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-3.8-flash",
     google_api_key=api_key,
     temperature=0.2
 )
