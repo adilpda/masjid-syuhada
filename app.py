@@ -18,7 +18,7 @@ st.title("🕌 Asisten RAG Cagar Budaya Masjid Syuhada Yogyakarta")
 st.caption("Aplikasi Publikasi Metadata Arsitektur & Inventarisasi Kerusakan berbasis Dublin Core (DCMI) & Google Gemini AI")
 
 # -----------------------------------------------------------------------------
-# 2. Pengaturan API Key & Model Google Gemini (Hanya untuk LLM Generation)
+# 2. Pengaturan API Key & Model Google Gemini
 # -----------------------------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 
@@ -26,15 +26,15 @@ if not api_key:
     st.error("🔑 API Key belum ditemukan! Silahkan atur GEMINI_API_KEY pada file .streamlit/secrets.toml atau Streamlit Cloud Secrets.")
     st.stop()
 
-# Inisialisasi LLM Google Gemini untuk menjawab pertanyaan
+# Inisialisasi LLM Google Gemini menggunakan model standar yang stabil
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.8-flash",
+    model="gemini-1.5-flash",
     google_api_key=api_key,
     temperature=0.2
 )
 
 # -----------------------------------------------------------------------------
-# 3. Pemuatan Data & Mesin Pencari TF-IDF (Robust & Tanpa Error Embedding)
+# 3. Pemuatan Data & Mesin Pencari TF-IDF (Lokal, Cepat, & Stabil)
 # -----------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Memuat dan Mengindeks Dataset Metadata...")
 def load_and_prepare_search_engine(excel_path: str):
@@ -75,7 +75,7 @@ def load_and_prepare_search_engine(excel_path: str):
             }
             documents.append({"page_content": content, "metadata": metadata})
 
-    # Buat TF-IDF Vectorizer Matrix untuk Pencarian Semantik Lokal
+    # Buat TF-IDF Vectorizer Matrix untuk Pencarian Lokal
     corpus = [doc["page_content"] for doc in documents]
     vectorizer = TfidfVectorizer().fit(corpus)
     doc_vectors = vectorizer.transform(corpus)
@@ -92,7 +92,7 @@ def search_documents(query, top_k=4):
     
     results = []
     for idx in top_indices:
-        if similarities[idx] > 0.0:  # Pastikan ada kecocokan
+        if similarities[idx] > 0.0:
             results.append(documents[idx])
     return results
 
@@ -105,7 +105,7 @@ st.sidebar.info(
     "- Dokumen 2: Gambar Teknis & Elemen Arsitektur\n"
     "- Dokumen 4: Inventarisasi Kerusakan\n"
     "- Standar Metadata: Dublin Core (DCMI)\n"
-    "- Mesin Pencari: TF-IDF Semantic Index (10% Stabil)"
+    "- Mesin Pencari: TF-IDF Semantic Index"
 )
 
 # Inisialisasi Riwayat Percakapan
@@ -144,8 +144,18 @@ Petunjuk Jawaban:
 
             # LLM Generation Step
             response = llm.invoke(prompt_text)
-            answer = response.content
             
+            # Ekstrak string teks secara aman dari respons Gemini untuk menghindari format JSON mentah
+            if hasattr(response, "content"):
+                answer = response.content
+            else:
+                answer = str(response)
+                
+            if isinstance(answer, dict):
+                answer = answer.get("text", str(answer))
+            elif isinstance(answer, list):
+                answer = "".join([str(item) for item in answer])
+
             st.write(answer)
             
             # Tampilkan Referensi Sumber Metadata (RAG Transparency)
