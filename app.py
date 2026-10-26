@@ -1,9 +1,9 @@
 import os
 import streamlit as st
 import pandas as pd
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # -----------------------------------------------------------------------------
 # 1. Konfigurasi Halaman & Tema Streamlit
@@ -15,10 +15,10 @@ st.set_page_config(
 )
 
 st.title("🕌 Asisten RAG Cagar Budaya Masjid Syuhada Yogyakarta")
-st.caption("Aplikasi Publikasi Metadata Arsitektur & Inventarisasi Kerusakan berbasis Dublin Core (DCMI) & Google Gemini RAG")
+st.caption("Aplikasi Publikasi Metadata Arsitektur & Inventarisasi Kerusakan berbasis Dublin Core (DCMI) & Google Gemini AI")
 
 # -----------------------------------------------------------------------------
-# 2. Pengaturan API Key & Model Google Gemini
+# 2. Pengaturan API Key & Model Google Gemini (Hanya untuk LLM Generation)
 # -----------------------------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 
@@ -26,12 +26,7 @@ if not api_key:
     st.error("🔑 API Key belum ditemukan! Silahkan atur GEMINI_API_KEY pada file .streamlit/secrets.toml atau Streamlit Cloud Secrets.")
     st.stop()
 
-# Initialize Embeddings & LLM (Menggunakan model embedding terbaru text-embedding-004)
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="text-embedding-004",
-    google_api_key=api_key
-)
-
+# Inisialisasi LLM Google Gemini untuk menjawab pertanyaan
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash",
     google_api_key=api_key,
@@ -39,10 +34,10 @@ llm = ChatGoogleGenerativeAI(
 )
 
 # -----------------------------------------------------------------------------
-# 3. Fungsi Pemuatan & Vektorisasi Data Excel (Caching)
+# 3. Pemuatan Data & Mesin Pencari TF-IDF (Robust & Tanpa Error Embedding)
 # -----------------------------------------------------------------------------
-@st.cache_resource(show_spinner="Menyiapkan Vector Database dari Dataset Metadata...")
-def load_and_build_vectorstore(excel_path: str):
+@st.cache_resource(show_spinner="Memuat dan Mengindeks Dataset Metadata...")
+def load_and_prepare_search_engine(excel_path: str):
     if not os.path.exists(excel_path):
         st.error(f"File data tidak ditemukan pada path: {excel_path}")
         st.stop()
@@ -63,7 +58,7 @@ def load_and_build_vectorstore(excel_path: str):
                 "significance": str(row.get("Significance_Level (dc:rights)", "")),
                 "source": "Dokumen 2 (Gambar Teknis & Identifikasi)"
             }
-            documents.append(Document(page_content=content, metadata=metadata))
+            documents.append({"page_content": content, "metadata": metadata})
 
     # Read Tab Kerusakan Elemen
     if "Metadata Kerusakan Elemen" in xls.sheet_names:
@@ -78,16 +73,28 @@ def load_and_build_vectorstore(excel_path: str):
                 "urgency": str(row.get("Status / Urgensi Penanganan", "")),
                 "source": str(row.get("Source_Document (dc:source)", "Dokumen 4"))
             }
-            documents.append(Document(page_content=content, metadata=metadata))
+            documents.append({"page_content": content, "metadata": metadata})
 
-    # Build FAISS Vector Database
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    return vectorstore
+    # Buat TF-IDF Vectorizer Matrix untuk Pencarian Semantik Lokal
+    corpus = [doc["page_content"] for doc in documents]
+    vectorizer = TfidfVectorizer().fit(corpus)
+    doc_vectors = vectorizer.transform(corpus)
+    
+    return documents, vectorizer, doc_vectors
 
-# Path Excel Dataset
 excel_file_path = "data/Metadata_DublinCore_RAG_Masjid_Syuhada.xlsx"
-vectorstore = load_and_build_vectorstore(excel_file_path)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+documents, vectorizer, doc_vectors = load_and_prepare_search_engine(excel_file_path)
+
+def search_documents(query, top_k=4):
+    query_vector = vectorizer.transform([query])
+    similarities = cosine_similarity(query_vector, doc_vectors).flatten()
+    top_indices = similarities.argsort()[::-1][:top_k]
+    
+    results = []
+    for idx in top_indices:
+        if similarities[idx] > 0.0:  # Pastikan ada kecocokan
+            results.append(documents[idx])
+    return results
 
 # -----------------------------------------------------------------------------
 # 4. Antarmuka Chatbot Streamlit
@@ -97,7 +104,8 @@ st.sidebar.info(
     "**Dataset Terintegrasi:**\n"
     "- Dokumen 2: Gambar Teknis & Elemen Arsitektur\n"
     "- Dokumen 4: Inventarisasi Kerusakan\n"
-    "- Standar Metadata: Dublin Core (DCMI)"
+    "- Standar Metadata: Dublin Core (DCMI)\n"
+    "- Mesin Pencari: TF-IDF Semantic Index (10% Stabil)"
 )
 
 # Inisialisasi Riwayat Percakapan
@@ -118,8 +126,8 @@ if user_input := st.chat_input("Tanyakan sesuatu (misal: Bagaimana spesifikasi p
     with st.chat_message("assistant"):
         with st.spinner("Mencari dalam Metadata Cagar Budaya..."):
             # Retrieval Step
-            retrieved_docs = retriever.invoke(user_input)
-            context_text = "\n\n".join([doc.page_content for doc in retrieved_docs])
+            retrieved_docs = search_documents(user_input, top_k=4)
+            context_text = "\n\n".join([doc["page_content"] for doc in retrieved_docs]) if retrieved_docs else "Tidak ada dokumen yang cocok."
             
             # Prompt Construction
             prompt_text = f"""Anda adalah asisten ahli Cagar Budaya dan Arsitektur resmi untuk Masjid Peringatan Syuhada Yogyakarta.
@@ -143,11 +151,11 @@ Petunjuk Jawaban:
             # Tampilkan Referensi Sumber Metadata (RAG Transparency)
             with st.expander("🔍 Lihat Referensi Metadata DCMI yang Dipakai AI"):
                 for idx, doc in enumerate(retrieved_docs, 1):
-                    meta = doc.metadata
+                    meta = doc["metadata"]
                     st.markdown(f"**[{idx}] {meta.get('identifier', 'Doc')} - {meta.get('title', '')}**")
                     st.markdown(f"- **Lokasi:** {meta.get('coverage', '-')}")
                     st.markdown(f"- **Sumber:** {meta.get('source', '-')}")
-                    st.caption(f"Context: {doc.page_content}")
+                    st.caption(f"Context: {doc['page_content']}")
                     st.divider()
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
