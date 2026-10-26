@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from langchain_google_genai import ChatGoogleGenerativeAI
+from google import genai
 
 # -----------------------------------------------------------------------------
 # 1. Konfigurasi Halaman & Tema Streamlit
@@ -18,7 +18,7 @@ st.title("🕌 Asisten RAG Cagar Budaya Masjid Syuhada Yogyakarta")
 st.caption("Aplikasi Publikasi Metadata Arsitektur & Inventarisasi Kerusakan berbasis Dublin Core (DCMI) & Google Gemini AI")
 
 # -----------------------------------------------------------------------------
-# 2. Pengaturan API Key & Model Google Gemini
+# 2. Pengaturan API Key & Klien Google GenAI Resmi
 # -----------------------------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 
@@ -26,12 +26,8 @@ if not api_key:
     st.error("🔑 API Key belum ditemukan! Silahkan atur GEMINI_API_KEY pada file .streamlit/secrets.toml atau Streamlit Cloud Secrets.")
     st.stop()
 
-# Inisialisasi LLM Google Gemini menggunakan model standar yang stabil
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    google_api_key=api_key,
-    temperature=0.2
-)
+# Inisialisasi klien resmi Google GenAI
+client = genai.Client(api_key=api_key)
 
 # -----------------------------------------------------------------------------
 # 3. Pemuatan Data & Mesin Pencari TF-IDF (Lokal, Cepat, & Stabil)
@@ -142,19 +138,15 @@ Petunjuk Jawaban:
 2. Sertakan rincian penting seperti Kode Elemen/Kerusakan (dc:identifier), Lokasi Ruang (dc:coverage), Material, dan Tingkat Signifikansi Cagar Budaya / Urgensi Perbaikan jika relevan.
 3. Jika jawaban tidak ada pada konteks metadata di atas, sampaikan dengan santun bahwa informasi spesifik tersebut belum tercatat dalam database inventarisasi saat ini."""
 
-            # LLM Generation Step
-            response = llm.invoke(prompt_text)
-            
-            # Ekstrak string teks secara aman dari respons Gemini untuk menghindari format JSON mentah
-            if hasattr(response, "content"):
-                answer = response.content
-            else:
-                answer = str(response)
-                
-            if isinstance(answer, dict):
-                answer = answer.get("text", str(answer))
-            elif isinstance(answer, list):
-                answer = "".join([str(item) for item in answer])
+            # LLM Generation Step menggunakan google-genai client langsung
+            try:
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt_text
+                )
+                answer = response.text
+            except Exception as e:
+                answer = f"Terjadi kesalahan saat memproses permintaan ke Gemini API: {str(e)}"
 
             st.write(answer)
             
