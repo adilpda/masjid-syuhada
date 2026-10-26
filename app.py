@@ -138,10 +138,10 @@ Petunjuk Jawaban:
 2. Sertakan rincian penting seperti Kode Elemen/Kerusakan (dc:identifier), Lokasi Ruang (dc:coverage), Material, dan Tingkat Signifikansi Cagar Budaya / Urgensi Perbaikan jika relevan.
 3. Jika jawaban tidak ada pada konteks metadata di atas, sampaikan dengan santun bahwa informasi spesifik tersebut belum tercatat dalam database inventarisasi saat ini."""
 
-            # LLM Generation Step menggunakan model gemini-2.5-flash
+            # LLM Generation Step menggunakan model gemini-3.8-flash terbaru
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.8-flash",
                     contents=prompt_text
                 )
                 answer = response.text
